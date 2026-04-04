@@ -435,8 +435,14 @@ export class InteractiveMode {
 
 		// Ensure fd and rg are available (downloads if missing, adds to PATH via getBinDir)
 		// Both are needed: fd for autocomplete, rg for grep tool and bash commands
-		const [fdPath] = await Promise.all([ensureTool("fd"), ensureTool("rg")]);
-		this.fdPath = fdPath;
+		// Run in background to not block UI initialization - tools aren't needed immediately
+		Promise.all([ensureTool("fd"), ensureTool("rg")]).then(([fdPath]) => {
+			this.fdPath = fdPath;
+			// Re-setup autocomplete with fd path now available
+			// This enables file path suggestions via fd
+			this.setupAutocomplete(fdPath);
+		});
+		// Don't await - let UI initialize while tools load in background
 
 		// Add header container as first child
 		this.ui.addChild(this.headerContainer);
@@ -662,7 +668,10 @@ export class InteractiveMode {
 			const data = (await response.json()) as { version?: string };
 			const latestVersion = data.version;
 
-			if (latestVersion && latestVersion !== this.version) {
+			// this.version may include a branch suffix like "0.14.0 (my-branch)" when
+			// running from source. Strip it before comparing against the npm version.
+			const baseVersion = this.version.replace(/\s*\(.*\)$/, "");
+			if (latestVersion && latestVersion !== baseVersion) {
 				return latestVersion;
 			}
 

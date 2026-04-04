@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join, resolve } from "path";
@@ -166,7 +167,19 @@ const pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8"));
 
 export const APP_NAME: string = pkg.piConfig?.name || "pi";
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
-export const VERSION: string = pkg.version;
+export const VERSION: string = (() => {
+	const base: string = pkg.version;
+	try {
+		const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+			cwd: getPackageDir(),
+			encoding: "utf-8",
+			timeout: 1000,
+			stdio: ["pipe", "pipe", "pipe"],
+		}).trim();
+		if (branch && branch !== "main" && branch !== "HEAD") return `${base} (${branch})`;
+	} catch {}
+	return base;
+})();
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;

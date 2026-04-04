@@ -4,9 +4,9 @@ import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/
 import { type Static, Type } from "@sinclair/typebox";
 import { TypeCompiler } from "@sinclair/typebox/compiler";
 import chalk from "chalk";
-import { highlight, supportsLanguage } from "cli-highlight";
 import { getCustomThemesDir, getThemesDir } from "../../../config.js";
 import type { SourceInfo } from "../../../core/source-info.js";
+import { highlight, supportsLanguage } from "./highlight.js";
 
 // ============================================================================
 // Types & Schema

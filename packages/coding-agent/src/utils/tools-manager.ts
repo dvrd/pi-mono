@@ -9,6 +9,9 @@ import { pipeline } from "stream/promises";
 import { APP_NAME, getBinDir } from "../config.js";
 
 const TOOLS_DIR = getBinDir();
+
+// Cache for tool paths to avoid repeated filesystem checks and spawnSync calls
+const toolPathCache = new Map<string, string | null | undefined>();
 const NETWORK_TIMEOUT_MS = 10_000;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 
@@ -82,20 +85,32 @@ function commandExists(cmd: string): boolean {
 
 // Get the path to a tool (system-wide or in our tools dir)
 export function getToolPath(tool: "fd" | "rg"): string | null {
+	// Check cache first
+	const cached = toolPathCache.get(tool);
+	if (cached !== undefined) {
+		return cached;
+	}
+
 	const config = TOOLS[tool];
-	if (!config) return null;
+	if (!config) {
+		toolPathCache.set(tool, null);
+		return null;
+	}
 
 	// Check our tools directory first
 	const localPath = join(TOOLS_DIR, config.binaryName + (platform() === "win32" ? ".exe" : ""));
 	if (existsSync(localPath)) {
+		toolPathCache.set(tool, localPath);
 		return localPath;
 	}
 
 	// Check system PATH - if found, just return the command name (it's in PATH)
 	if (commandExists(config.binaryName)) {
+		toolPathCache.set(tool, config.binaryName);
 		return config.binaryName;
 	}
 
+	toolPathCache.set(tool, null);
 	return null;
 }
 

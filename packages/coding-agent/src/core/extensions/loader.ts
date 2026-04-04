@@ -289,15 +289,26 @@ function createExtensionAPI(
 	return api;
 }
 
-async function loadExtensionModule(extensionPath: string) {
-	const jiti = createJiti(import.meta.url, {
-		moduleCache: false,
-		// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
-		// Also disable tryNative so jiti handles ALL imports (not just the entry point)
-		// In Node.js/dev: use aliases to resolve to node_modules paths
-		...(isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }),
-	});
+// Shared JITI instance - reused across all extension loads to avoid repeated setup cost
+let sharedJiti: ReturnType<typeof createJiti> | undefined;
 
+function getSharedJiti(): ReturnType<typeof createJiti> {
+	if (!sharedJiti) {
+		sharedJiti = createJiti(import.meta.url, {
+			moduleCache: true,
+			// Enable filesystem cache to persist compiled extensions across restarts
+			cache: path.join(getAgentDir(), ".jiti-cache"),
+			// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
+			// Also disable tryNative so jiti handles ALL imports (not just the entry point)
+			// In Node.js/dev: use aliases to resolve to node_modules paths
+			...(isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }),
+		});
+	}
+	return sharedJiti;
+}
+
+async function loadExtensionModule(extensionPath: string) {
+	const jiti = getSharedJiti();
 	const module = await jiti.import(extensionPath, { default: true });
 	const factory = module as ExtensionFactory;
 	return typeof factory !== "function" ? undefined : factory;
