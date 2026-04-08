@@ -414,10 +414,21 @@ export class AuthStorage {
 
 	/**
 	 * Force-refresh an OAuth token regardless of expiry.
-	 * Use this to recover from 401 errors caused by external token invalidation
-	 * (e.g. another client such as Claude Code refreshed the token first).
+	 * On macOS, reads the current token from Claude Code's Keychain (the
+	 * authoritative source when sharing an enterprise subscription).
+	 * Falls back to the standard OAuth refresh flow on other platforms.
 	 */
 	async forceRefreshOAuthToken(providerId: OAuthProviderId): Promise<string | undefined> {
+		// On macOS, try reading the latest token from Claude Code's Keychain
+		if (process.platform === "darwin" && providerId === "anthropic") {
+			try {
+				const token = await this.syncFromClaudeCodeKeychain();
+				if (token) return token;
+			} catch {
+				// Fall through to standard refresh
+			}
+		}
+
 		const provider = getOAuthProvider(providerId);
 		if (!provider) return undefined;
 
@@ -453,6 +464,33 @@ export class AuthStorage {
 		});
 
 		return result ? provider.getApiKey(result.newCredentials) : undefined;
+	}
+
+	/**
+	 * Read the current Anthropic OAuth token from Claude Code's macOS Keychain
+	 * and update auth.json. Returns the access token or undefined.
+	 */
+	private async syncFromClaudeCodeKeychain(): Promise<string | undefined> {
+		const { execFileSync } = await import("child_process");
+		const raw = execFileSync("security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], {
+			encoding: "utf-8",
+			timeout: 5000,
+		}).trim();
+		const keychainData = JSON.parse(raw) as {
+			claudeAiOauth?: { accessToken?: string; refreshToken?: string; expiresAt?: number };
+		};
+		const cc = keychainData.claudeAiOauth;
+		if (!cc?.accessToken) return undefined;
+
+		// Update auth.json with the Keychain token
+		const newCred: OAuthCredential = {
+			type: "oauth",
+			access: cc.accessToken,
+			refresh: cc.refreshToken ?? "",
+			expires: cc.expiresAt ?? Date.now() + 3600000,
+		};
+		this.set("anthropic", newCred);
+		return cc.accessToken;
 	}
 
 	/**
