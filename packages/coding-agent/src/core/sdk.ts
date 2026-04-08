@@ -342,6 +342,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 					attributionHeaders || auth.headers || options?.headers
 						? { ...attributionHeaders, ...auth.headers, ...options?.headers }
 						: undefined,
+				onTokenExpired:
+					model.provider === "anthropic"
+						? () => authStorage.forceRefreshOAuthToken(model.provider as "anthropic")
+						: undefined,
 			});
 		},
 		onPayload: async (payload, _model) => {
