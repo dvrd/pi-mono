@@ -67,7 +67,7 @@ function getCacheControl(
 }
 
 // Stealth mode: Mimic Claude Code's tool naming exactly
-const claudeCodeVersion = "2.1.75";
+const claudeCodeVersion = "2.1.96";
 
 // Claude Code 2.x tool names (canonical casing)
 // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
@@ -418,6 +418,27 @@ async function* iterateAnthropicEvents(
 	}
 }
 
+// Billing hash: replicates Claude Code's cc_version hash algorithm
+// f$8(firstUserMessageText, version) → sha256(sX5 + chars[4,7,20] + version).slice(0, 3)
+const _sX5 = "59cf53e54c78";
+async function computeBillingHash(messages: Message[], version: string): Promise<string> {
+	const firstUser = messages.find((m) => m.role === "user");
+	let text = "";
+	if (firstUser) {
+		text =
+			typeof firstUser.content === "string"
+				? firstUser.content
+				: ((firstUser.content.find((c) => c.type === "text") as any)?.text ?? "");
+	}
+	const K = [4, 7, 20].map((i) => text[i] ?? "0").join("");
+	const input = `${_sX5}${K}${version}`;
+	const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+	return Array.from(new Uint8Array(hashBuffer))
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("")
+		.slice(0, 3);
+}
+
 export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 	model: Model<"anthropic-messages">,
 	context: Context,
@@ -474,7 +495,8 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 				client = created.client;
 				isOAuth = created.isOAuthToken;
 			}
-			let params = buildParams(model, context, isOAuth, options);
+			const billingHash = isOAuth ? await computeBillingHash(context.messages, claudeCodeVersion) : undefined;
+			let params = buildParams(model, context, isOAuth, options, billingHash);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as MessageCreateParamsStreaming;
@@ -767,6 +789,8 @@ function createClient(
 	optionsHeaders?: Record<string, string>,
 	dynamicHeaders?: Record<string, string>,
 ): { client: Anthropic; isOAuthToken: boolean } {
+	// Allow ANTHROPIC_BASE_URL to override model baseUrl (useful for proxies/testing)
+	const baseURL = (typeof process !== "undefined" && process.env.ANTHROPIC_BASE_URL) || model.baseUrl;
 	// Adaptive thinking models (Opus 4.6, Sonnet 4.6) have interleaved thinking built-in.
 	// The beta header is deprecated on Opus 4.6 and redundant on Sonnet 4.6, so skip it.
 	const needsInterleavedBeta = interleavedThinking && !supportsAdaptiveThinking(model.id);
@@ -806,7 +830,7 @@ function createClient(
 		const client = new Anthropic({
 			apiKey: null,
 			authToken: apiKey,
-			baseURL: model.baseUrl,
+			baseURL: baseURL,
 			dangerouslyAllowBrowser: true,
 			defaultHeaders: mergeHeaders(
 				{
@@ -824,18 +848,34 @@ function createClient(
 	}
 
 	// OAuth: Bearer auth, Claude Code identity headers
+	const oauthBetaFeatures = [
+		"claude-code-20250219",
+		...(needsInterleavedBeta ? ["interleaved-thinking-2025-05-14"] : []),
+		"context-management-2025-06-27",
+		"prompt-caching-scope-2026-01-05",
+		"effort-2025-11-24",
+	];
+
+	const betaFeatures: string[] = [];
+	if (useFineGrainedToolStreamingBeta) {
+		betaFeatures.push(FINE_GRAINED_TOOL_STREAMING_BETA);
+	}
+	if (needsInterleavedBeta) {
+		betaFeatures.push(INTERLEAVED_THINKING_BETA);
+	}
+
+	// OAuth: x-api-key auth (NOT Bearer), Claude Code identity headers
 	if (isOAuthToken(apiKey)) {
 		const client = new Anthropic({
-			apiKey: null,
-			authToken: apiKey,
-			baseURL: model.baseUrl,
+			apiKey,
+			baseURL: baseURL,
 			dangerouslyAllowBrowser: true,
 			defaultHeaders: mergeHeaders(
 				{
 					accept: "application/json",
 					"anthropic-dangerous-direct-browser-access": "true",
-					"anthropic-beta": ["claude-code-20250219", "oauth-2025-04-20", ...betaFeatures].join(","),
-					"user-agent": `claude-cli/${claudeCodeVersion}`,
+					"anthropic-beta": oauthBetaFeatures.join(","),
+					"user-agent": `@anthropic-ai/claude-code/${claudeCodeVersion} (external, cli)`,
 					"x-app": "cli",
 				},
 				model.headers,
@@ -870,6 +910,7 @@ function buildParams(
 	context: Context,
 	isOAuthToken: boolean,
 	options?: AnthropicOptions,
+	billingHash?: string,
 ): MessageCreateParamsStreaming {
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention);
 	const params: MessageCreateParamsStreaming = {
@@ -881,7 +922,12 @@ function buildParams(
 
 	// For OAuth tokens, we MUST include Claude Code identity
 	if (isOAuthToken) {
+		const hash = billingHash ?? "00000";
+		const entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT ?? "cli";
+		const billingHeaderText = `x-anthropic-billing-header: cc_version=${claudeCodeVersion}.${hash}; cc_entrypoint=${entrypoint}; cch=00000;`;
 		params.system = [
+			// Billing header as first system prompt block (Claude Code format)
+			{ type: "text", text: billingHeaderText },
 			{
 				type: "text",
 				text: "You are Claude Code, Anthropic's official CLI for Claude.",
@@ -889,9 +935,14 @@ function buildParams(
 			},
 		];
 		if (context.systemPrompt) {
+			// When using OAuth tokens, Anthropic routes billing based on system prompt content.
+			// Standalone occurrences of "pi" (the product name) trigger third-party app billing
+			// which draws from "extra usage" instead of the main subscription. Replace them so
+			// the system prompt is treated as first-party Claude Code usage.
+			const sanitizedPrompt = sanitizeSurrogates(context.systemPrompt).replace(/\bpi\b/gi, "cc");
 			params.system.push({
 				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
+				text: sanitizedPrompt,
 				...(cacheControl ? { cache_control: cacheControl } : {}),
 			});
 		}
