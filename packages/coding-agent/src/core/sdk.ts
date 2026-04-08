@@ -305,6 +305,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				...options,
 				apiKey: auth.apiKey,
 				headers: auth.headers || options?.headers ? { ...auth.headers, ...options?.headers } : undefined,
+				// On 401, force-refresh the OAuth token (e.g. another client invalidated it)
+				onTokenExpired:
+					model.provider === "anthropic"
+						? () => authStorage.forceRefreshOAuthToken(model.provider as "anthropic")
+						: undefined,
 			});
 		},
 		onPayload: async (payload, _model) => {

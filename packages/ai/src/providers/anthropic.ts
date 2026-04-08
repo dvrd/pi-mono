@@ -184,6 +184,12 @@ export interface AnthropicOptions extends StreamOptions {
 	 * `AnthropicVertex` that shares the same messaging API.
 	 */
 	client?: Anthropic;
+	/**
+	 * Called when a 401 authentication error occurs (e.g. OAuth token was
+	 * invalidated by another client before expiry). Return a fresh API key to
+	 * retry the request once, or undefined to let the error propagate.
+	 */
+	onTokenExpired?: () => Promise<string | undefined>;
 }
 
 function mergeHeaders(...headerSources: (Record<string, string> | undefined)[]): Record<string, string> {
@@ -279,169 +285,208 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 				params = nextParams as MessageCreateParamsStreaming;
 			}
 			const requestOptions: Parameters<typeof client.messages.stream>[1] = { signal: options?.signal };
-			const anthropicStream = client.messages.stream({ ...params, stream: true }, requestOptions);
 			stream.push({ type: "start", partial: output });
 
 			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
-			const blocks = output.content as Block[];
 
-			for await (const event of anthropicStream) {
-				if (event.type === "message_start") {
-					output.responseId = event.message.id;
-					// Capture initial token usage from message_start event
-					// This ensures we have input token counts even if the stream is aborted early
-					output.usage.input = event.message.usage.input_tokens || 0;
-					output.usage.output = event.message.usage.output_tokens || 0;
-					output.usage.cacheRead = event.message.usage.cache_read_input_tokens || 0;
-					output.usage.cacheWrite = event.message.usage.cache_creation_input_tokens || 0;
-					// Anthropic doesn't provide total_tokens, compute from components
-					output.usage.totalTokens =
-						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
-					calculateCost(model, output.usage);
-				} else if (event.type === "content_block_start") {
-					if (event.content_block.type === "text") {
-						const block: Block = {
-							type: "text",
-							text: "",
-							index: event.index,
-						};
-						output.content.push(block);
-						stream.push({ type: "text_start", contentIndex: output.content.length - 1, partial: output });
-					} else if (event.content_block.type === "thinking") {
-						const block: Block = {
-							type: "thinking",
-							thinking: "",
-							thinkingSignature: "",
-							index: event.index,
-						};
-						output.content.push(block);
-						stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
-					} else if (event.content_block.type === "redacted_thinking") {
-						const block: Block = {
-							type: "thinking",
-							thinking: "[Reasoning redacted]",
-							thinkingSignature: event.content_block.data,
-							redacted: true,
-							index: event.index,
-						};
-						output.content.push(block);
-						stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
-					} else if (event.content_block.type === "tool_use") {
-						const block: Block = {
-							type: "toolCall",
-							id: event.content_block.id,
-							name: isOAuth
-								? fromClaudeCodeName(event.content_block.name, context.tools)
-								: event.content_block.name,
-							arguments: (event.content_block.input as Record<string, any>) ?? {},
-							partialJson: "",
-							index: event.index,
-						};
-						output.content.push(block);
-						stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
-					}
-				} else if (event.type === "content_block_delta") {
-					if (event.delta.type === "text_delta") {
-						const index = blocks.findIndex((b) => b.index === event.index);
-						const block = blocks[index];
-						if (block && block.type === "text") {
-							block.text += event.delta.text;
-							stream.push({
-								type: "text_delta",
-								contentIndex: index,
-								delta: event.delta.text,
-								partial: output,
-							});
-						}
-					} else if (event.delta.type === "thinking_delta") {
-						const index = blocks.findIndex((b) => b.index === event.index);
-						const block = blocks[index];
-						if (block && block.type === "thinking") {
-							block.thinking += event.delta.thinking;
-							stream.push({
-								type: "thinking_delta",
-								contentIndex: index,
-								delta: event.delta.thinking,
-								partial: output,
-							});
-						}
-					} else if (event.delta.type === "input_json_delta") {
-						const index = blocks.findIndex((b) => b.index === event.index);
-						const block = blocks[index];
-						if (block && block.type === "toolCall") {
-							block.partialJson += event.delta.partial_json;
-							block.arguments = parseStreamingJson(block.partialJson);
-							stream.push({
-								type: "toolcall_delta",
-								contentIndex: index,
-								delta: event.delta.partial_json,
-								partial: output,
-							});
-						}
-					} else if (event.delta.type === "signature_delta") {
-						const index = blocks.findIndex((b) => b.index === event.index);
-						const block = blocks[index];
-						if (block && block.type === "thinking") {
-							block.thinkingSignature = block.thinkingSignature || "";
-							block.thinkingSignature += event.delta.signature;
-						}
-					}
-				} else if (event.type === "content_block_stop") {
-					const index = blocks.findIndex((b) => b.index === event.index);
-					const block = blocks[index];
-					if (block) {
-						delete (block as any).index;
-						if (block.type === "text") {
-							stream.push({
-								type: "text_end",
-								contentIndex: index,
-								content: block.text,
-								partial: output,
-							});
-						} else if (block.type === "thinking") {
-							stream.push({
-								type: "thinking_end",
-								contentIndex: index,
-								content: block.thinking,
-								partial: output,
-							});
-						} else if (block.type === "toolCall") {
-							block.arguments = parseStreamingJson(block.partialJson);
-							// Finalize in-place and strip the scratch buffer so replay only
-							// carries parsed arguments.
-							delete (block as { partialJson?: string }).partialJson;
-							stream.push({
-								type: "toolcall_end",
-								contentIndex: index,
-								toolCall: block,
-								partial: output,
-							});
-						}
-					}
-				} else if (event.type === "message_delta") {
-					if (event.delta.stop_reason) {
-						output.stopReason = mapStopReason(event.delta.stop_reason);
-					}
-					// Only update usage fields if present (not null).
-					// Preserves input_tokens from message_start when proxies omit it in message_delta.
-					if (event.usage.input_tokens != null) {
-						output.usage.input = event.usage.input_tokens;
-					}
-					if (event.usage.output_tokens != null) {
-						output.usage.output = event.usage.output_tokens;
-					}
-					if (event.usage.cache_read_input_tokens != null) {
-						output.usage.cacheRead = event.usage.cache_read_input_tokens;
-					}
-					if (event.usage.cache_creation_input_tokens != null) {
-						output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
-					}
-					// Anthropic doesn't provide total_tokens, compute from components
-					output.usage.totalTokens =
-						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
-					calculateCost(model, output.usage);
+			// Retry once on 401: OAuth tokens can be invalidated mid-session when another
+			// client (e.g. Claude Code binary) refreshes the token before its stored expiry.
+			let retried = false;
+			for (;;) {
+				if (retried) {
+					// Reset accumulated state before the second attempt
+					output.content = [];
+					output.responseId = undefined;
+					output.stopReason = "stop";
+					output.usage = {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					};
 				}
-			}
+				const blocks = output.content as Block[];
+				try {
+					const anthropicStream = client.messages.stream({ ...params, stream: true }, requestOptions);
+					for await (const event of anthropicStream) {
+						if (event.type === "message_start") {
+							output.responseId = event.message.id;
+							// Capture initial token usage from message_start event
+							// This ensures we have input token counts even if the stream is aborted early
+							output.usage.input = event.message.usage.input_tokens || 0;
+							output.usage.output = event.message.usage.output_tokens || 0;
+							output.usage.cacheRead = event.message.usage.cache_read_input_tokens || 0;
+							output.usage.cacheWrite = event.message.usage.cache_creation_input_tokens || 0;
+							// Anthropic doesn't provide total_tokens, compute from components
+							output.usage.totalTokens =
+								output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
+							calculateCost(model, output.usage);
+						} else if (event.type === "content_block_start") {
+							if (event.content_block.type === "text") {
+								const block: Block = {
+									type: "text",
+									text: "",
+									index: event.index,
+								};
+								output.content.push(block);
+								stream.push({ type: "text_start", contentIndex: output.content.length - 1, partial: output });
+							} else if (event.content_block.type === "thinking") {
+								const block: Block = {
+									type: "thinking",
+									thinking: "",
+									thinkingSignature: "",
+									index: event.index,
+								};
+								output.content.push(block);
+								stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
+							} else if (event.content_block.type === "redacted_thinking") {
+								const block: Block = {
+									type: "thinking",
+									thinking: "[Reasoning redacted]",
+									thinkingSignature: event.content_block.data,
+									redacted: true,
+									index: event.index,
+								};
+								output.content.push(block);
+								stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
+							} else if (event.content_block.type === "tool_use") {
+								const block: Block = {
+									type: "toolCall",
+									id: event.content_block.id,
+									name: isOAuth
+										? fromClaudeCodeName(event.content_block.name, context.tools)
+										: event.content_block.name,
+									arguments: (event.content_block.input as Record<string, any>) ?? {},
+									partialJson: "",
+									index: event.index,
+								};
+								output.content.push(block);
+								stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
+							}
+						} else if (event.type === "content_block_delta") {
+							if (event.delta.type === "text_delta") {
+								const index = blocks.findIndex((b) => b.index === event.index);
+								const block = blocks[index];
+								if (block && block.type === "text") {
+									block.text += event.delta.text;
+									stream.push({
+										type: "text_delta",
+										contentIndex: index,
+										delta: event.delta.text,
+										partial: output,
+									});
+								}
+							} else if (event.delta.type === "thinking_delta") {
+								const index = blocks.findIndex((b) => b.index === event.index);
+								const block = blocks[index];
+								if (block && block.type === "thinking") {
+									block.thinking += event.delta.thinking;
+									stream.push({
+										type: "thinking_delta",
+										contentIndex: index,
+										delta: event.delta.thinking,
+										partial: output,
+									});
+								}
+							} else if (event.delta.type === "input_json_delta") {
+								const index = blocks.findIndex((b) => b.index === event.index);
+								const block = blocks[index];
+								if (block && block.type === "toolCall") {
+									block.partialJson += event.delta.partial_json;
+									block.arguments = parseStreamingJson(block.partialJson);
+									stream.push({
+										type: "toolcall_delta",
+										contentIndex: index,
+										delta: event.delta.partial_json,
+										partial: output,
+									});
+								}
+							} else if (event.delta.type === "signature_delta") {
+								const index = blocks.findIndex((b) => b.index === event.index);
+								const block = blocks[index];
+								if (block && block.type === "thinking") {
+									block.thinkingSignature = block.thinkingSignature || "";
+									block.thinkingSignature += event.delta.signature;
+								}
+							}
+						} else if (event.type === "content_block_stop") {
+							const index = blocks.findIndex((b) => b.index === event.index);
+							const block = blocks[index];
+							if (block) {
+								delete (block as any).index;
+								if (block.type === "text") {
+									stream.push({
+										type: "text_end",
+										contentIndex: index,
+										content: block.text,
+										partial: output,
+									});
+								} else if (block.type === "thinking") {
+									stream.push({
+										type: "thinking_end",
+										contentIndex: index,
+										content: block.thinking,
+										partial: output,
+									});
+								} else if (block.type === "toolCall") {
+									block.arguments = parseStreamingJson(block.partialJson);
+									// Finalize in-place and strip the scratch buffer so replay only
+									// carries parsed arguments.
+									delete (block as { partialJson?: string }).partialJson;
+									stream.push({
+										type: "toolcall_end",
+										contentIndex: index,
+										toolCall: block,
+										partial: output,
+									});
+								}
+							}
+						} else if (event.type === "message_delta") {
+							if (event.delta.stop_reason) {
+								output.stopReason = mapStopReason(event.delta.stop_reason);
+							}
+							// Only update usage fields if present (not null).
+							// Preserves input_tokens from message_start when proxies omit it in message_delta.
+							if (event.usage.input_tokens != null) {
+								output.usage.input = event.usage.input_tokens;
+							}
+							if (event.usage.output_tokens != null) {
+								output.usage.output = event.usage.output_tokens;
+							}
+							if (event.usage.cache_read_input_tokens != null) {
+								output.usage.cacheRead = event.usage.cache_read_input_tokens;
+							}
+							if (event.usage.cache_creation_input_tokens != null) {
+								output.usage.cacheWrite = event.usage.cache_creation_input_tokens;
+							}
+							// Anthropic doesn't provide total_tokens, compute from components
+							output.usage.totalTokens =
+								output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
+							calculateCost(model, output.usage);
+						}
+					}
+					break; // stream completed successfully
+				} catch (err) {
+					// Retry once on 401: token was invalidated externally (e.g. by Claude Code binary)
+					if (!retried && err instanceof Anthropic.APIError && err.status === 401 && options?.onTokenExpired) {
+						retried = true;
+						const freshKey = await options.onTokenExpired();
+						if (freshKey) {
+							const refreshed = createClient(
+								model,
+								freshKey,
+								options?.interleavedThinking ?? true,
+								options?.headers,
+							);
+							client = refreshed.client;
+							continue; // retry the outer for(;;) loop
+						}
+					}
+					throw err;
+				}
+			} // end for(;;) retry loop
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
@@ -514,8 +559,13 @@ export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleS
 	}
 
 	const base = buildBaseOptions(model, options, apiKey);
+	const onTokenExpired = options?.onTokenExpired;
 	if (!options?.reasoning) {
-		return streamAnthropic(model, context, { ...base, thinkingEnabled: false } satisfies AnthropicOptions);
+		return streamAnthropic(model, context, {
+			...base,
+			thinkingEnabled: false,
+			onTokenExpired,
+		} satisfies AnthropicOptions);
 	}
 
 	// For Opus 4.6 and Sonnet 4.6: use adaptive thinking with effort level
@@ -526,6 +576,7 @@ export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleS
 			...base,
 			thinkingEnabled: true,
 			effort,
+			onTokenExpired,
 		} satisfies AnthropicOptions);
 	}
 
@@ -541,6 +592,7 @@ export const streamSimpleAnthropic: StreamFunction<"anthropic-messages", SimpleS
 		maxTokens: adjusted.maxTokens,
 		thinkingEnabled: true,
 		thinkingBudgetTokens: adjusted.thinkingBudget,
+		onTokenExpired,
 	} satisfies AnthropicOptions);
 };
 

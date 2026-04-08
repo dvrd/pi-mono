@@ -413,6 +413,49 @@ export class AuthStorage {
 	}
 
 	/**
+	 * Force-refresh an OAuth token regardless of expiry.
+	 * Use this to recover from 401 errors caused by external token invalidation
+	 * (e.g. another client such as Claude Code refreshed the token first).
+	 */
+	async forceRefreshOAuthToken(providerId: OAuthProviderId): Promise<string | undefined> {
+		const provider = getOAuthProvider(providerId);
+		if (!provider) return undefined;
+
+		const result = await this.storage.withLockAsync(async (current) => {
+			const currentData = this.parseStorageData(current);
+			this.data = currentData;
+			this.loadError = null;
+
+			const cred = currentData[providerId];
+			if (cred?.type !== "oauth") {
+				return { result: null as null };
+			}
+
+			const oauthCreds: Record<string, OAuthCredentials> = {};
+			for (const [key, value] of Object.entries(currentData)) {
+				if (value.type === "oauth") {
+					oauthCreds[key] = value;
+				}
+			}
+
+			const refreshed = await getOAuthApiKey(providerId, oauthCreds);
+			if (!refreshed) {
+				return { result: null as null };
+			}
+
+			const merged: AuthStorageData = {
+				...currentData,
+				[providerId]: { type: "oauth", ...refreshed.newCredentials },
+			};
+			this.data = merged;
+			this.loadError = null;
+			return { result: refreshed, next: JSON.stringify(merged, null, 2) };
+		});
+
+		return result ? provider.getApiKey(result.newCredentials) : undefined;
+	}
+
+	/**
 	 * Get API key for a provider.
 	 * Priority:
 	 * 1. Runtime override (CLI --api-key)
