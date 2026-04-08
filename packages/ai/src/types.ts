@@ -112,6 +112,11 @@ export interface SimpleStreamOptions extends StreamOptions {
 	reasoning?: ThinkingLevel;
 	/** Custom token budgets for thinking levels (token-based providers only) */
 	thinkingBudgets?: ThinkingBudgets;
+	/**
+	 * Called when a 401 authentication error occurs. Return a fresh API key to
+	 * retry once, or undefined to propagate the error. (Anthropic OAuth only)
+	 */
+	onTokenExpired?: () => Promise<string | undefined>;
 }
 
 // Generic StreamFunction with typed options.
