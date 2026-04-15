@@ -4594,7 +4594,7 @@ export const MODELS = {
 			maxTokens: 262144,
 		} satisfies Model<"openai-completions">,
 		"moonshotai/Kimi-K2.5": {
-			id: "moonshotai/Kimi-K2.5",
+			id: "moonshotai/Kimi-K2.5:fireworks-ai",
 			name: "Kimi-K2.5",
 			api: "openai-completions",
 			provider: "huggingface",

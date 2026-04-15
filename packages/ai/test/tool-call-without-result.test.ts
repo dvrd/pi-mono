@@ -169,7 +169,7 @@ describe("Tool Call Without Result Tests", () => {
 	});
 
 	describe.skipIf(!process.env.HF_TOKEN)("Hugging Face Provider", () => {
-		const model = getModel("huggingface", "moonshotai/Kimi-K2.5");
+		const model = getModel("huggingface", "moonshotai/Kimi-K2.5:fireworks-ai");
 
 		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
 			await testToolCallWithoutResult(model);

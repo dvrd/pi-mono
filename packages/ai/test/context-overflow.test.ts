@@ -373,7 +373,7 @@ describe("Context overflow error handling", () => {
 
 	describe.skipIf(!process.env.HF_TOKEN)("Hugging Face", () => {
 		it("Kimi-K2.5 - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("huggingface", "moonshotai/Kimi-K2.5");
+			const model = getModel("huggingface", "moonshotai/Kimi-K2.5:fireworks-ai");
 			const result = await testContextOverflow(model, process.env.HF_TOKEN!);
 			logResult(result);
 
