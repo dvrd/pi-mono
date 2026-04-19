@@ -1135,7 +1135,18 @@ async function generateModels() {
 			(candidate.id === "claude-opus-4-6" ||
 				candidate.id === "claude-sonnet-4-6" ||
 				candidate.id === "claude-opus-4.6" ||
-				candidate.id === "claude-sonnet-4.6")
+				candidate.id === "claude-sonnet-4.6" ||
+				candidate.id === "claude-opus-4-7" ||
+				candidate.id === "claude-opus-4.7")
+		) {
+			candidate.contextWindow = 1000000;
+		}
+
+		if (
+			candidate.provider === "google-antigravity" &&
+			(candidate.id === "claude-opus-4-6-thinking" ||
+				candidate.id === "claude-sonnet-4-6" ||
+				candidate.id === "claude-opus-4-7-thinking")
 		) {
 			candidate.contextWindow = 1000000;
 		}
@@ -1354,6 +1365,34 @@ async function generateModels() {
 			},
 			contextWindow: 128000,
 			maxTokens: 16384,
+		});
+	}
+
+	// Add missing GitHub Copilot Claude Opus 4.7 until models.dev includes it.
+	const copilotOpus46 = allModels.find(
+		(m) => m.provider === "github-copilot" && m.id === "claude-opus-4.6",
+	);
+	if (copilotOpus46 && !allModels.some((m) => m.provider === "github-copilot" && m.id === "claude-opus-4.7")) {
+		allModels.push({
+			...copilotOpus46,
+			id: "claude-opus-4.7",
+			name: "Claude Opus 4.7",
+		});
+	}
+
+	// Add missing Antigravity Claude Opus 4.7 Thinking until models.dev includes it.
+	if (!allModels.some((m) => m.provider === "google-antigravity" && m.id === "claude-opus-4-7-thinking")) {
+		allModels.push({
+			id: "claude-opus-4-7-thinking",
+			name: "Claude Opus 4.7 Thinking (Antigravity)",
+			api: "google-gemini-cli",
+			provider: "google-antigravity",
+			baseUrl: "https://daily-cloudcode-pa.sandbox.googleapis.com",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+			contextWindow: 200000,
+			maxTokens: 128000,
 		});
 	}
 

@@ -531,7 +531,10 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 
 				try {
 					const response = await client.messages.create({ ...params, stream: true }, requestOptions).asResponse();
-					await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+					await options?.onResponse?.(
+						{ status: response.status, headers: headersToRecord(response.headers) },
+						model,
+					);
 					stream.push({ type: "start", partial: output });
 
 					for await (const event of iterateAnthropicEvents(response, options?.signal)) {
@@ -564,7 +567,11 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 									index: event.index,
 								};
 								output.content.push(block);
-								stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
+								stream.push({
+									type: "thinking_start",
+									contentIndex: output.content.length - 1,
+									partial: output,
+								});
 							} else if (event.content_block.type === "redacted_thinking") {
 								const block: Block = {
 									type: "thinking",
@@ -574,7 +581,11 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 									index: event.index,
 								};
 								output.content.push(block);
-								stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
+								stream.push({
+									type: "thinking_start",
+									contentIndex: output.content.length - 1,
+									partial: output,
+								});
 							} else if (event.content_block.type === "tool_use") {
 								const block: Block = {
 									type: "toolCall",
@@ -587,7 +598,11 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 									index: event.index,
 								};
 								output.content.push(block);
-								stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
+								stream.push({
+									type: "toolcall_start",
+									contentIndex: output.content.length - 1,
+									partial: output,
+								});
 							}
 						} else if (event.type === "content_block_delta") {
 							if (event.delta.type === "text_delta") {
@@ -1024,7 +1039,7 @@ function buildParams(
 			const display: AnthropicThinkingDisplay = options.thinkingDisplay ?? "summarized";
 			if (supportsAdaptiveThinking(model.id)) {
 				// Adaptive thinking: Claude decides when and how much to think.
-				params.thinking = { type: "adaptive", display };
+				params.thinking = { type: "adaptive", display } as any;
 				if (options.effort) {
 					// The Anthropic SDK types can lag newly supported effort values such as "xhigh".
 					params.output_config =
@@ -1040,7 +1055,7 @@ function buildParams(
 					type: "enabled",
 					budget_tokens: options.thinkingBudgetTokens || 1024,
 					display,
-				};
+				} as any;
 			}
 		} else if (options?.thinkingEnabled === false) {
 			params.thinking = { type: "disabled" };

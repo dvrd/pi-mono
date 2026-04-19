@@ -566,12 +566,21 @@ function streamCustomAnthropic(
 // =============================================================================
 
 export default function (pi: ExtensionAPI) {
-	pi.registerProvider("custom-anthropic", {
+	pi.registerProvider("anthropic", {
 		baseUrl: "https://api.anthropic.com",
 		apiKey: "CUSTOM_ANTHROPIC_API_KEY",
 		api: "custom-anthropic-api",
 
 		models: [
+			{
+				id: "claude-haiku-4-5-20251001",
+				name: "Claude Haiku 4.5",
+				reasoning: false,
+				input: ["text", "image"],
+				cost: { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1 },
+				contextWindow: 200000,
+				maxTokens: 16000,
+			},
 			{
 				id: "claude-opus-4-5",
 				name: "Claude Opus 4.5 (Custom)",
