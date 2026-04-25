@@ -214,6 +214,12 @@ export interface AnthropicOptions extends StreamOptions {
 	 * `AnthropicVertex` that shares the same messaging API.
 	 */
 	client?: Anthropic;
+	/**
+	 * Called when a 401 authentication error occurs (e.g. OAuth token was
+	 * invalidated by another client before expiry). Return a fresh API key to
+	 * retry the request once, or undefined to let the error propagate.
+	 */
+	onTokenExpired?: () => Promise<string | undefined>;
 }
 
 function mergeHeaders(...headerSources: (Record<string, string | null> | undefined)[]): Record<string, string | null> {
@@ -468,6 +474,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 		try {
 			let client: Anthropic;
 			let isOAuth: boolean;
+			let copilotDynamicHeaders: Record<string, string> | undefined;
 
 			if (options?.client) {
 				client = options.client;
@@ -475,7 +482,6 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			} else {
 				const apiKey = options?.apiKey ?? getEnvApiKey(model.provider) ?? "";
 
-				let copilotDynamicHeaders: Record<string, string> | undefined;
 				if (model.provider === "github-copilot") {
 					const hasImages = hasCopilotVisionInput(context.messages);
 					copilotDynamicHeaders = buildCopilotDynamicHeaders({

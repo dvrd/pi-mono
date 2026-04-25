@@ -106,6 +106,27 @@ function getInstructionMessage(params: CapturedParams) {
 	return params.messages.find((message) => message.role === "system" || message.role === "developer");
 }
 
+function createAnthropicCompatModel(): Model<"openai-completions"> {
+	return {
+		id: "synthetic-anthropic-compat",
+		name: "Synthetic Anthropic Compat",
+		api: "openai-completions",
+		provider: "opencode-go",
+		baseUrl: "https://opencode.ai/zen/go/v1",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+		},
+		contextWindow: 262144,
+		maxTokens: 65536,
+		compat: { cacheControlFormat: "anthropic" },
+	};
+}
+
 function expectAnthropicCacheMarkers(params: CapturedParams): void {
 	const instructionMessage = getInstructionMessage(params);
 	expect(instructionMessage).toBeDefined();
@@ -126,27 +147,8 @@ describe("openai-completions cacheControlFormat", () => {
 		mockState.lastParams = undefined;
 	});
 
-	it("applies Anthropic-style cache markers when model compat enables them", async () => {
-		const model: Model<"openai-completions"> = {
-			id: "custom-qwen",
-			name: "Custom Qwen",
-			api: "openai-completions",
-			provider: "openrouter",
-			baseUrl: "https://example.com/v1",
-			reasoning: true,
-			input: ["text"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
-			contextWindow: 128000,
-			maxTokens: 32000,
-			compat: {
-				cacheControlFormat: "anthropic",
-			},
-		};
+	it("applies Anthropic-style cache markers when model compat requests it", async () => {
+		const model = createAnthropicCompatModel();
 
 		const params = await capturePayload(model);
 		expectAnthropicCacheMarkers(params);
@@ -159,26 +161,7 @@ describe("openai-completions cacheControlFormat", () => {
 	});
 
 	it("omits Anthropic-style cache markers when cacheRetention is none", async () => {
-		const model: Model<"openai-completions"> = {
-			id: "custom-qwen",
-			name: "Custom Qwen",
-			api: "openai-completions",
-			provider: "openrouter",
-			baseUrl: "https://example.com/v1",
-			reasoning: true,
-			input: ["text"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
-			contextWindow: 128000,
-			maxTokens: 32000,
-			compat: {
-				cacheControlFormat: "anthropic",
-			},
-		};
+		const model = createAnthropicCompatModel();
 		const params = await capturePayload(model, { cacheRetention: "none" });
 		const instructionMessage = getInstructionMessage(params);
 
