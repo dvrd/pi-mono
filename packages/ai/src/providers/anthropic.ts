@@ -912,8 +912,12 @@ function createClient(
 		return { client, isOAuthToken: false };
 	}
 
-	// OAuth: Bearer auth, Claude Code identity headers
+	// OAuth betas — must mirror Claude Code's `lc6()` for OAuth users.
+	// `oauth-2025-04-20` is mandatory: without it the Anthropic API rejects
+	// OAuth bearer tokens with 401 ("Invalid bearer token"). Claude Code
+	// always pushes this beta when `vq()` (OAuth-user check) is true.
 	const oauthBetaFeatures = [
+		"oauth-2025-04-20",
 		"claude-code-20250219",
 		...(needsInterleavedBeta ? ["interleaved-thinking-2025-05-14"] : []),
 		"context-management-2025-06-27",
@@ -929,10 +933,14 @@ function createClient(
 		betaFeatures.push(INTERLEAVED_THINKING_BETA);
 	}
 
-	// OAuth: x-api-key auth (NOT Bearer), Claude Code identity headers
+	// OAuth: Bearer auth (Claude Code: `apiKey: null, authToken: accessToken`)
+	// + Claude Code identity headers. Sending the OAuth token as x-api-key
+	// causes 401; the Anthropic SDK only adds the OAuth beta when the token
+	// is in `authToken`.
 	if (isOAuthToken(apiKey)) {
 		const client = new Anthropic({
-			apiKey,
+			apiKey: null,
+			authToken: apiKey,
 			baseURL: baseURL,
 			dangerouslyAllowBrowser: true,
 			defaultHeaders: mergeHeaders(
