@@ -73,7 +73,7 @@ describe.sequential("Anthropic OAuth", () => {
 		expect(fetchMock).toHaveBeenCalledOnce();
 	});
 
-	it("omits scope from refresh token requests", async () => {
+	it("includes scope in refresh token requests matching Claude's nG_ scope set", async () => {
 		const fetchMock = vi.fn(async (input: unknown, init?: RequestInit): Promise<Response> => {
 			expect(getUrl(input)).toBe("https://platform.claude.com/v1/oauth/token");
 			expect(init?.method).toBe("POST");
@@ -81,7 +81,9 @@ describe.sequential("Anthropic OAuth", () => {
 			expect(body.grant_type).toBe("refresh_token");
 			expect(body.client_id).toBeTruthy();
 			expect(body.refresh_token).toBe("refresh-token");
-			expect(body).not.toHaveProperty("scope");
+			expect(body.scope).toBe(
+				"user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload",
+			);
 			return jsonResponse({
 				access_token: "new-access-token",
 				refresh_token: "new-refresh-token",
@@ -95,5 +97,20 @@ describe.sequential("Anthropic OAuth", () => {
 		expect(credentials.access).toBe("new-access-token");
 		expect(credentials.refresh).toBe("new-refresh-token");
 		expect(fetchMock).toHaveBeenCalledOnce();
+	});
+
+	it("preserves the original refresh token when the server omits it", async () => {
+		const fetchMock = vi.fn(async (): Promise<Response> => {
+			return jsonResponse({
+				access_token: "new-access-token",
+				expires_in: 3600,
+			});
+		});
+		vi.stubGlobal("fetch", fetchMock);
+
+		const credentials = await refreshAnthropicToken("original-refresh-token");
+
+		expect(credentials.access).toBe("new-access-token");
+		expect(credentials.refresh).toBe("original-refresh-token");
 	});
 });

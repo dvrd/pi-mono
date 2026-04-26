@@ -15,6 +15,15 @@ function base64urlEncode(bytes: Uint8Array): string {
 }
 
 /**
+ * Generate a random base64url string suitable for OAuth state.
+ */
+export function generateState(): string {
+	const bytes = new Uint8Array(32);
+	crypto.getRandomValues(bytes);
+	return base64urlEncode(bytes);
+}
+
+/**
  * Generate PKCE code verifier and challenge.
  * Uses Web Crypto API for cross-platform compatibility.
  */
