@@ -26,7 +26,11 @@ const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const REDIRECT_URI = "http://localhost:1455/auth/callback";
-const SCOPE = "openid profile email offline_access";
+// Scopes match codex 0.125.0 verbatim. The two `api.connectors.*` grants
+// are required for any future OpenAI connector flow; without them the
+// id_token issued by `auth.openai.com` lacks the connector scopes and the
+// connector API rejects with 403.
+const SCOPE = "openid profile email offline_access api.connectors.read api.connectors.invoke";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
 
 type TokenSuccess = { type: "success"; access: string; refresh: string; expires: number };
@@ -145,6 +149,10 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResult> {
 				grant_type: "refresh_token",
 				refresh_token: refreshToken,
 				client_id: CLIENT_ID,
+				// Codex 0.125.0 sends `scope` in refresh requests. The server
+				// echoes back the original grant's scopes if omitted, so this
+				// is mostly cosmetic — we send it to match the official client.
+				scope: SCOPE,
 			}),
 		});
 
