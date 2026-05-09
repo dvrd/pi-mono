@@ -925,14 +925,6 @@ function createClient(
 		"effort-2025-11-24",
 	];
 
-	const betaFeatures: string[] = [];
-	if (useFineGrainedToolStreamingBeta) {
-		betaFeatures.push(FINE_GRAINED_TOOL_STREAMING_BETA);
-	}
-	if (needsInterleavedBeta) {
-		betaFeatures.push(INTERLEAVED_THINKING_BETA);
-	}
-
 	// OAuth: Bearer auth (Claude Code: `apiKey: null, authToken: accessToken`)
 	// + Claude Code identity headers. Sending the OAuth token as x-api-key
 	// causes 401; the Anthropic SDK only adds the OAuth beta when the token
