@@ -32,13 +32,31 @@ describe("Fireworks models", () => {
 		});
 	});
 
-	it("registers the Fire Pass turbo router model", () => {
+	it("registers the Fire Pass K2.5 turbo router model", () => {
 		const model = getModel("fireworks", "accounts/fireworks/routers/kimi-k2p5-turbo");
 
 		expect(model).toBeDefined();
 		expect(model.api).toBe("anthropic-messages");
 		expect(model.baseUrl).toBe("https://api.fireworks.ai/inference");
 		expect(model.input).toEqual(["text", "image"]);
+	});
+
+	it("registers the Fire Pass K2.6 turbo router model", () => {
+		const model = getModel("fireworks", "accounts/fireworks/routers/kimi-k2p6-turbo");
+
+		expect(model).toBeDefined();
+		expect(model.api).toBe("openai-completions");
+		expect(model.baseUrl).toBe("https://api.fireworks.ai/inference/v1");
+		expect(model.reasoning).toBe(true);
+		expect(model.input).toEqual(["text", "image"]);
+		expect(model.contextWindow).toBe(256000);
+		expect(model.maxTokens).toBe(256000);
+		expect(model.cost).toEqual({
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+		});
 	});
 
 	it("resolves FIREWORKS_API_KEY from the environment", () => {

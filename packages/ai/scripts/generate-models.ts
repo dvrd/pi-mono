@@ -1266,6 +1266,29 @@ async function generateModels() {
 		});
 	}
 
+	// Add missing Kimi K2.6 Turbo (Fire Pass) until models.dev includes it.
+	// Uses openai-completions API because the Fireworks Anthropic-compatible
+	// endpoint routes turbo requests through /v1/chat/completions internally.
+	if (!allModels.some((m) => m.provider === "fireworks" && m.id === "accounts/fireworks/routers/kimi-k2p6-turbo")) {
+		allModels.push({
+			id: "accounts/fireworks/routers/kimi-k2p6-turbo",
+			name: "Kimi K2.6 Turbo",
+			api: "openai-completions",
+			provider: "fireworks",
+			baseUrl: "https://api.fireworks.ai/inference/v1",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 256000,
+			maxTokens: 256000,
+		});
+	}
+
 	// Add missing Gemini 3.1 Flash Lite Preview until models.dev includes it.
 	if (!allModels.some((m) => m.provider === "google" && m.id === "gemini-3.1-flash-lite-preview")) {
 		allModels.push({
